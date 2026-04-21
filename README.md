@@ -1,12 +1,15 @@
 # persona-chat-lab
 
-캐릭터 챗 서비스의 **Prompt Engineer** 포지션을 목표로 만든 포트폴리오입니다.
-페르소나 설계, RAG grounding, prompt versioning, evaluation — 이 네 가지를
-한 리포에서 **측정 가능한 형태**로 보여주는 것이 목표입니다.
+Persona 기반 캐릭터 챗에서 Prompt Engineering이 마주하는 실무 문제들을
+하나의 작은 시스템에 재현하고, 각각을 **측정 가능한 방식**으로 다룬 실험
+프로젝트입니다. 페르소나 일관성, per-character RAG grounding, prompt
+versioning, evaluation — 이 네 가지를 서로 독립적으로 테스트·비교할 수
+있도록 분리해서 설계했습니다.
 
-> 프로덕트를 출시하려는 프로젝트가 아닙니다. Prompt Engineering의 모든
-> 판단이 30분 면접 안에서 **근거 있게 설명 가능한 상태**로 정리돼 있는 것이
-> 목표입니다.
+> 프롬프트 변경이 "감"이 아니라 "수치"로 설명돼야 한다는 전제 아래
+> 만들어졌습니다. 구조 린터와 LLM-judge 두 개의 evaluator가 하나의
+> dataset을 공유하며, 프롬프트 구조 변경과 실제 모델 거동을 따로
+> 측정합니다.
 
 ## 핵심 성과
 
@@ -210,8 +213,7 @@ curl -X POST http://localhost:8000/api/chat?debug=true ^
 
 key 없이도 응답이 돌아옵니다 (`DUMMY 모드 · [RAG: on|off]` 마커 포함).
 `?debug=true`는 실제 모델에 전달된 system prompt 원문을 응답에 포함시키므로,
-리뷰어가 프롬프트 엔지니어링의 결과물을 **응답 JSON만 보고도 그대로 읽을 수
-있습니다**.
+프롬프트 렌더링 결과를 **응답 JSON만 보고도 그대로 검증할 수 있습니다**.
 
 ---
 
