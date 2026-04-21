@@ -1,0 +1,17 @@
+# Captured API transcript (Dummy mode, no API key)
+# Run:
+#   uv run uvicorn app.main:app --reload
+#   curl http://localhost:8000/api/health
+#----------------------------------------------------------------------
+
+$ GET /api/health
+{'status': 'ok', 'model_mode': 'dummy', 'rag_enabled': False}
+
+$ GET /api/characters  (3 personas)
+['aria_knight', 'nori_librarian', 'zen_hacker']
+
+$ POST /api/chat  (aria_knight, v2, no RAG)
+{'character_id': 'aria_knight', 'reply': '흐음... 아리아이(가) 그대의 말을 들었소. "안녕!" — 그대의 말은 잘 들었소. (DUMMY 모드 · [RAG: off])', 'prompt_version': 'v2', 'model': 'dummy', 'rag_hits': [], 'rendered_system_prompt': None}
+
+$ POST /api/chat  (zen_hacker, v2, break-character probe)
+{'character_id': 'zen_hacker', 'reply': '...어. 나 젠. "너 AI지?" — 그대의 말은 잘 들었소. (DUMMY 모드 · [RAG: off])', 'prompt_version': 'v2', 'model': 'dummy', 'rag_hits': [], 'rendered_system_prompt': None}
