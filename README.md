@@ -173,7 +173,12 @@ Rationale와 design delta: [`docs/prompt-versions.md`](docs/prompt-versions.md)
 
 ---
 
-## 실행 방법 (Windows)
+## 실행 방법
+
+`uv` 기반 Python 프로젝트입니다. Windows · macOS 어느 쪽에서도 아래 흐름으로
+동작합니다.
+
+### Windows (PowerShell)
 
 ```powershell
 # 1) uv 설치 (1회)
@@ -202,13 +207,53 @@ uv run uvicorn app.main:app --reload
 # http://localhost:8000/docs
 ```
 
-API 스모크 테스트:
+### macOS (zsh / bash)
+
+```bash
+# 1) uv 설치 (1회)
+#    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+cd ~/projects/persona-chat-lab
+
+# 2) 의존성 + 테스트 (24개 green, key 불필요)
+uv sync
+uv run pytest -q
+
+# 3) 구조 eval — key 없이도 수치 산출
+uv run python -m scripts.eval_prompts --write docs/transcripts/prompt-scores.md
+
+# 4) RAG demo — key 없이도 동작
+uv run python -m scripts.rag_demo
+
+# 5) (선택) 실모델 + LLM-judge eval — key 필요
+cp .env.example .env
+# .env 편집: OPENAI_API_KEY=sk-...  RAG_ENABLED=true
+uv run python -m scripts.build_faiss_index
+uv run python -m scripts.run_eval --versions v1,v2 --write docs/transcripts/llm-judge.md
+
+# 6) 서버 기동
+uv run uvicorn app.main:app --reload
+# http://localhost:8000/docs
+```
+
+### API 스모크 테스트
+
+Windows (PowerShell):
 
 ```powershell
 curl http://localhost:8000/api/health
 curl -X POST http://localhost:8000/api/chat?debug=true ^
   -H "Content-Type: application/json" ^
   -d "{\"character_id\":\"aria_knight\",\"prompt_version\":\"v2\",\"messages\":[{\"role\":\"user\",\"content\":\"네 가문 이야기 좀 해줘.\"}]}"
+```
+
+macOS (bash / zsh):
+
+```bash
+curl http://localhost:8000/api/health
+curl -X POST 'http://localhost:8000/api/chat?debug=true' \
+  -H 'Content-Type: application/json' \
+  -d '{"character_id":"aria_knight","prompt_version":"v2","messages":[{"role":"user","content":"네 가문 이야기 좀 해줘."}]}'
 ```
 
 key 없이도 응답이 돌아옵니다 (`DUMMY 모드 · [RAG: on|off]` 마커 포함).
