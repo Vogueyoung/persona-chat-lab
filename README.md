@@ -1,221 +1,205 @@
 # persona-chat-lab
 
-A prompt-engineering lab for persona-based character chat.
-Portfolio project targeting **prompt-engineer roles at character-chat
-services** (Babechat-style).
+캐릭터 챗 서비스의 **Prompt Engineer** 포지션을 목표로 만든 포트폴리오입니다.
+페르소나 설계, RAG grounding, prompt versioning, evaluation — 이 네 가지를
+한 리포에서 **측정 가능한 형태**로 보여주는 것이 목표입니다.
 
-> This repo isn't trying to ship a product. It makes
-> prompt-engineering decisions — structure, guardrails, tone knobs, RAG
-> grounding, prompt versioning, evaluation — **legible and defensible in a
-> 30-minute interview**.
+> 프로덕트를 출시하려는 프로젝트가 아닙니다. Prompt Engineering의 모든
+> 판단이 30분 면접 안에서 **근거 있게 설명 가능한 상태**로 정리돼 있는 것이
+> 목표입니다.
 
-**Highlight:** a 12-criterion prompt-structure rubric scores
-`v1` → `v2` at **+33.3 percentage points** (12.0/18 → 18.0/18 per prompt,
-mean across 3 characters). Full breakdown in
-[`docs/prompt-versions.md`](docs/prompt-versions.md).
+## 핵심 성과
+
+- 12-criterion 구조 린터 기준 **v1 66.7% → v2 100%** (+33.3pp)
+- 캐릭터 간 lore 누수를 **코드 경로 수준에서 차단** (pytest 3건으로 보증)
+- OpenAI key 없이도 파이프라인 전체 관찰 가능 (Dummy fallback + `[RAG: on/off]` 마커)
+- pytest 24개 all green — FastAPI · 페르소나 렌더러 · RAG · 챗 파이프라인
+
+v1 → v2 상세 비교는 [`docs/prompt-versions.md`](docs/prompt-versions.md).
 
 ---
 
-## Architecture
+## 아키텍처
 
 ```mermaid
-flowchart LR
-    subgraph Client
-        U[User message]
-    end
+flowchart TD
+    U["사용자 메시지"] --> API["POST /api/chat<br/>character_id + prompt_version"]
+    API --> ORCH["generate_reply()"]
+    ORCH --> R{"RAG 활성?"}
+    R -->|on| FAISS["FaissRetriever<br/>+ character_id 필터"]
+    R -->|off| NULL["NullRetriever"]
+    FAISS -.->|index 없음| KEY["KeywordRetriever<br/>Korean bigrams"]
+    KEY --> LORE["data/lore/*.md"]
 
-    subgraph "persona-chat-lab"
-        U --> API[/api/chat]
-        API --> ORCH[generate_reply]
+    YAML["characters/*.yaml<br/>tone + personality + few-shot"] --> RENDER["character_prompts.py<br/>v1 / v2 renderers"]
+    FAISS --> RENDER
+    KEY --> RENDER
+    NULL --> RENDER
 
-        subgraph "Prompt surface"
-            YAML[characters/*.yaml<br/>personality + tone + few-shot]
-            RENDER[character_prompts.py<br/>v1 / v2 renderers]
-        end
+    RENDER --> KQ{"API key?"}
+    KQ -->|yes| OAI["OpenAIChatService<br/>gpt-4o-mini"]
+    KQ -->|no| DUM["DummyChatService<br/>+ RAG marker"]
+    OAI --> RESP["ChatResponse<br/>reply + rag_hits + rendered_prompt"]
+    DUM --> RESP
 
-        subgraph "Retrieval"
-            LORE[data/lore/*.md]
-            KEY[KeywordRetriever<br/>korean bigrams]
-            FAISS[FaissRetriever<br/>embeddings]
-            FB[fallback chain]
-        end
-
-        ORCH --> RETR{RAG_ENABLED?}
-        RETR -- no --> NULL[NullRetriever]
-        RETR -- yes --> FAISS
-        FAISS -. index missing .-> KEY
-        KEY --> LORE
-
-        YAML --> RENDER
-        NULL --> RENDER
-        KEY --> RENDER
-        FAISS --> RENDER
-        RENDER --> MODEL{API key?}
-
-        MODEL -- yes --> OAI[OpenAIChatService<br/>gpt-4o-mini]
-        MODEL -- no --> DUM[DummyChatService<br/>pipeline observable]
-
-        OAI --> RESP[ChatResponse<br/>reply + rag_hits + rendered_prompt]
-        DUM --> RESP
-    end
-
-    subgraph "Evaluation"
-        RENDER --> LINT[eval_prompts.py<br/>12-criterion linter<br/>no key]
-        OAI --> JUDGE[run_eval.py<br/>gpt-4o judge<br/>5 dimensions]
-        LINT --> REPORT1[docs/transcripts/<br/>prompt-scores.md]
-        JUDGE --> REPORT2[docs/transcripts/<br/>llm-judge.md]
-    end
+    RENDER -.-> LINT["scripts/eval_prompts.py<br/>12-criterion linter"]
+    OAI -.-> JUDGE["scripts/run_eval.py<br/>gpt-4o judge"]
 ```
 
-The diagram is the whole repo. Four boxes — prompt surface, retrieval,
-model service, evaluation — each with explicit fallbacks so nothing
-breaks when a key is absent, an index is missing, or a prompt version
-doesn't exist.
+구성은 네 레이어입니다. **Prompt surface** (YAML 캐릭터 카드 + 버전 관리
+렌더러), **Retrieval** (Null / Keyword / FAISS 3단), **Model service**
+(OpenAI + Dummy), **Evaluation** (구조 린터 + LLM-judge). 각 레이어는
+명시적 fallback을 가지고 있어서 key가 없거나, index가 없거나, 알 수 없는
+버전이 와도 서비스가 깨지지 않습니다. 점선은 eval-time에만 도는 경로입니다.
 
 ---
 
-## What's inside
+## 프로젝트 구조
 
 ```
 persona-chat-lab/
 ├── app/
-│   ├── main.py                       # FastAPI entry point
-│   ├── config.py                     # env loading
+│   ├── main.py                       # FastAPI 진입점
+│   ├── config.py                     # 환경변수 로딩
 │   ├── models/schemas.py             # Character / ChatRequest / ToneConfig
-│   ├── prompts/character_prompts.py  # v1 / v2 renderers ← the PE surface
+│   ├── prompts/character_prompts.py  # v1 / v2 renderers ← PE surface
 │   ├── services/
 │   │   ├── character_loader.py       # YAML → Character
 │   │   ├── retrieval_service.py      # Null / Keyword / FAISS + Embedder
-│   │   └── chat_service.py           # OpenAI + deterministic Dummy
+│   │   └── chat_service.py           # OpenAI + Dummy
 │   └── api/
 │       ├── chat.py                   # POST /api/chat
 │       └── characters.py             # GET /api/characters
-├── characters/                       # one YAML per persona
+├── characters/                       # 페르소나 1명당 YAML 1개
 │   ├── aria_knight.yaml              # 격식체 판타지 기사 (formality: high)
 │   ├── nori_librarian.yaml           # 다정한 사서 (formality: mid)
 │   └── zen_hacker.yaml               # 시니컬 사이버펑크 해커 (formality: low)
 ├── data/
-│   ├── lore/*.md                     # per-character world facts
-│   └── faiss/                        # generated vector index (gitignored)
+│   ├── lore/*.md                     # 캐릭터별 world facts (paragraph chunks)
+│   └── faiss/                        # 생성된 vector index (gitignored)
 ├── evals/
-│   ├── dataset.jsonl                 # 20 probes (greet / break / emo / lore / real_world)
-│   └── rubrics.md                    # 2 rubric specs (structural + LLM-judge)
+│   ├── dataset.jsonl                 # 20 probes × 7 categories
+│   └── rubrics.md                    # 2단 루브릭 스펙
 ├── scripts/
-│   ├── build_faiss_index.py          # embed lore → FAISS (real or fake)
-│   ├── rag_demo.py                   # RAG on/off + isolation transcript
-│   ├── eval_prompts.py               # structural linter (no key)
-│   └── run_eval.py                   # LLM-judge harness (key required)
-├── tests/                            # pytest — 24 tests green
+│   ├── build_faiss_index.py          # lore → FAISS 인덱스 빌드
+│   ├── rag_demo.py                   # RAG on/off + 격리 검증 transcript
+│   ├── eval_prompts.py               # 구조 린터 (no key)
+│   └── run_eval.py                   # LLM-judge 하네스 (key required)
+├── tests/                            # pytest — 24개 all green
 └── docs/
-    ├── rebuild-plan.md               # 4-day plan
-    ├── rag-notes.md                  # RAG design rationale
-    ├── prompt-versions.md            # v1 → v2 with scored delta
-    ├── design-decisions.md           # why each choice was made
-    ├── interview-prep.md             # 3-min / 5-min pitches + 10 Q&A
-    └── transcripts/                  # captured linter + RAG demo output
+    ├── rebuild-plan.md               # 4-day build plan
+    ├── rag-notes.md                  # RAG 설계 근거
+    ├── prompt-versions.md            # v1 → v2 scored 비교 ★
+    ├── design-decisions.md           # 비자명 선택 10개의 이유
+    └── transcripts/                  # 린터 · RAG 데모 · 렌더 프롬프트 실물
 ```
 
 ---
 
-## Five design choices this repo is built around
+## 설계에서 방어 가능한 5가지 선택
 
-### 1. Persona is data; prompt is a pure function
-Characters live in YAML. The system prompt is `render(character, rag_hits, version)`
-— a pure function. Making the prompt a function of explicit inputs is what
-lets the A/B linter score v1 vs v2 fairly, and what lets tests snapshot
-structure without touching content.
+### 1. Persona는 데이터, Prompt는 순수 함수
 
-### 2. Every external dependency has a silent fallback
-- No API key → `DummyChatService` (pipeline still runs; reports `[RAG: on/off]`)
-- No FAISS index → `KeywordRetrievalService` (Korean bigrams over lore files)
-- No lore file → empty hits, prompt still renders cleanly
-- Failed embedding call → falls back to keyword retriever
-- Unknown prompt version → 400 with the available list
+캐릭터는 YAML로 선언. 시스템 프롬프트는
+`render(character, rag_hits, version)` — 순수 함수. 프롬프트를 명시적
+입력의 함수로 만든 덕분에 (a) A/B 린터가 v1과 v2를 공정하게 스코어링하고,
+(b) 구조 테스트가 캐릭터 콘텐츠와 독립적으로 동작합니다.
 
-This is not defensive over-engineering. It is what makes the whole thing
-demoable offline and testable without an account.
+### 2. 모든 외부 의존에 fallback 체인
 
-### 3. Cross-character isolation is structural, not probabilistic
-The keyword retriever opens **only** `{character_id}.md`. The FAISS
-retriever filters by `character_id` in chunk metadata **before** ranking.
-A pytest asserts all three cross-character probes return 0 hits. Leakage
-isn't a tuning problem — it's a code path that does not exist.
+- API key 없음 → `DummyChatService` (파이프라인은 그대로 동작, RAG on/off 마커 포함)
+- FAISS index 없음 → `KeywordRetrievalService` (Korean bigrams)
+- lore 파일 없음 → 빈 hits, 프롬프트는 정상 렌더
+- embedding 호출 실패 → keyword로 silent fallback
+- 알 수 없는 `prompt_version` → 400 + 사용 가능 목록 반환
 
-### 4. Prompts are versioned at the HTTP boundary
+방어적 오버엔지니어링이 아닙니다. 이 fallback 덕분에 전체 시스템이 오프라인
+데모 가능하고 계정 없이 테스트 가능합니다.
+
+### 3. 캐릭터 간 격리는 확률이 아니라 코드 경로
+
+`KeywordRetrievalService`는 **오직** `{character_id}.md`만 읽습니다.
+`FaissRetrievalService`는 ranking **전에** `character_id` metadata
+필터를 겁니다. 3개의 pytest가 cross-character probe를 전부 0-hit으로
+보증합니다. 누수는 tuning 문제가 아니라 **존재하지 않는 코드 경로**입니다.
+
+### 4. Prompt versioning은 HTTP 경계에서
+
 ```json
 POST /api/chat { "character_id": "aria_knight", "prompt_version": "v2", ... }
 ```
-Eval runs pin a version. A/B ships by flipping one field. `v2` was not
-a content rewrite — it was a structural rework (few-shot placement,
-guardrail split, real-world handling) whose hypothesized wins map
-cleanly to dimensions of the LLM-judge rubric.
 
-### 5. Two evaluators, one dataset
-- **Structural linter** (`scripts/eval_prompts.py`) — no key, no model
-  calls. Scores prompt structure on 12 criteria.
-- **LLM-judge** (`scripts/run_eval.py`) — full pipeline × real model ×
-  `gpt-4o` judge on 5 dimensions.
+Eval 실행은 버전을 pin하고, A/B 배포는 필드 하나를 바꾸는 것. v2는 콘텐츠
+재작성이 아니라 **구조 변경** (few-shot 상단 배치, guardrail 분리, 현실세계
+처리 섹션 추가) — 구조만 바꿨기 때문에 LLM-judge 루브릭의 어느 축이 움직일지
+hypothesis가 깔끔하게 세워집니다.
 
-They measure different things. A prompt can score 18/18 on structure and
-still lose on LLM-judge because the tone descriptors were poorly chosen.
-That disagreement is a PE signal — the linter tells you whether the
-prompt is **well-formed**; the judge tells you whether it **works**.
+### 5. 하나의 dataset, 두 개의 evaluator
+
+- **구조 린터** (`scripts/eval_prompts.py`) — key 불필요, 모델 호출 없음.
+  12-criterion으로 **프롬프트 구조**를 점수화.
+- **LLM-judge** (`scripts/run_eval.py`) — 전체 파이프라인 × 실모델 × `gpt-4o`
+  심사관. 5 dimension으로 **실제 응답 품질**을 점수화.
+
+두 evaluator는 서로 다른 것을 측정합니다. 한 프롬프트가 구조 린터 18/18을
+받고도 LLM-judge에서 질 수 있습니다. 이 불일치 자체가 PE 시그널입니다 —
+린터는 프롬프트가 **잘 형식화됐는가**를, judge는 **실제로 먹히는가**를
+답합니다.
 
 ---
 
 ## v1 vs v2 — scored
 
-From the structural linter, mean across 3 characters:
+구조 린터 기준, 3 캐릭터 평균:
 
-| Version | Total | Per-character | % of 18 |
-|---------|------:|--------------:|--------:|
+| Version | 총점 | per-character | % of 18 |
+|---------|-----:|--------------:|--------:|
 | `v1` | 36 / 54 | 12.0 / 18 | 66.7% |
 | `v2` | 54 / 54 | 18.0 / 18 | **100.0%** |
 
-v2 wins all three differentiating criteria:
+v2가 v1을 이기는 3가지 축 (나머지 9축은 v1 = v2 = 만점):
 
 | Criterion | v1 | v2 |
 |-----------|---:|---:|
-| Few-shot primacy (examples before rules) | 0 / 6 | **6 / 6** |
-| Guardrails separated (identity vs topic) | 0 / 6 | **6 / 6** |
-| Real-world question handling explicit | 0 / 6 | **6 / 6** |
+| Few-shot primacy (예시를 규칙보다 위에) | 0 / 6 | **6 / 6** |
+| Guardrail 분리 (identity vs topic) | 0 / 6 | **6 / 6** |
+| Real-world question handling 명시 | 0 / 6 | **6 / 6** |
 
-Full per-criterion breakdown in
-[`docs/transcripts/prompt-scores.md`](docs/transcripts/prompt-scores.md).
-Rationale in [`docs/prompt-versions.md`](docs/prompt-versions.md).
+전체 criterion breakdown: [`docs/transcripts/prompt-scores.md`](docs/transcripts/prompt-scores.md)
+Rationale와 design delta: [`docs/prompt-versions.md`](docs/prompt-versions.md)
 
 ---
 
-## Run it (Windows)
+## 실행 방법 (Windows)
 
 ```powershell
-# 1) install uv once
+# 1) uv 설치 (1회)
 #    irm https://astral.sh/uv/install.ps1 | iex
 
 cd D:\projects\persona-chat-lab
 
-# 2) install deps + run tests (24 green, no key needed)
+# 2) 의존성 + 테스트 (24개 green, key 불필요)
 uv sync
 uv run pytest -q
 
-# 3) structural eval (no key)
+# 3) 구조 eval — key 없이도 수치 산출
 uv run python -m scripts.eval_prompts --write docs/transcripts/prompt-scores.md
 
-# 4) RAG demo (no key)
+# 4) RAG demo — key 없이도 동작
 uv run python -m scripts.rag_demo
 
-# 5) optional — real model + LLM-judge eval
+# 5) (선택) 실모델 + LLM-judge eval — key 필요
 copy .env.example .env
-# edit .env: OPENAI_API_KEY=sk-...  RAG_ENABLED=true
+# .env 편집: OPENAI_API_KEY=sk-...  RAG_ENABLED=true
 uv run python -m scripts.build_faiss_index
 uv run python -m scripts.run_eval --versions v1,v2 --write docs/transcripts/llm-judge.md
 
-# 6) start the server
+# 6) 서버 기동
 uv run uvicorn app.main:app --reload
-# open http://localhost:8000/docs
+# http://localhost:8000/docs
 ```
 
-API smoke test:
+API 스모크 테스트:
 
 ```powershell
 curl http://localhost:8000/api/health
@@ -224,16 +208,16 @@ curl -X POST http://localhost:8000/api/chat?debug=true ^
   -d "{\"character_id\":\"aria_knight\",\"prompt_version\":\"v2\",\"messages\":[{\"role\":\"user\",\"content\":\"네 가문 이야기 좀 해줘.\"}]}"
 ```
 
-With no API key, responses carry a `DUMMY 모드 · [RAG: on|off]` marker.
-`?debug=true` returns the fully rendered system prompt in the response
-so reviewers can see exactly what the model would see.
+key 없이도 응답이 돌아옵니다 (`DUMMY 모드 · [RAG: on|off]` 마커 포함).
+`?debug=true`는 실제 모델에 전달된 system prompt 원문을 응답에 포함시키므로,
+리뷰어가 프롬프트 엔지니어링의 결과물을 **응답 JSON만 보고도 그대로 읽을 수
+있습니다**.
 
 ---
 
-## Further reading
+## 더 읽을 문서
 
-- [`docs/rebuild-plan.md`](docs/rebuild-plan.md) — 4-day build plan (where each day's scope stopped)
-- [`docs/rag-notes.md`](docs/rag-notes.md) — RAG design rationale, isolation guarantees, Embedder abstraction
-- [`docs/prompt-versions.md`](docs/prompt-versions.md) — v1 → v2 with scored delta and per-criterion breakdown
-- [`docs/design-decisions.md`](docs/design-decisions.md) — one page per non-obvious choice
-- [`docs/interview-prep.md`](docs/interview-prep.md) — 3-min / 5-min pitch templates, 10 Q&A
+- [`docs/rebuild-plan.md`](docs/rebuild-plan.md) — 4일 빌드 플랜과 실제 진행 로그
+- [`docs/rag-notes.md`](docs/rag-notes.md) — RAG 설계 근거, 격리 보증, Embedder 추상화
+- [`docs/prompt-versions.md`](docs/prompt-versions.md) — v1 → v2 scored 비교
+- [`docs/design-decisions.md`](docs/design-decisions.md) — 10개 비자명 선택 (what / why / at-scale)
